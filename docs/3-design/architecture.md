@@ -7,13 +7,13 @@
 One crate, `oltp-pattern` — this domain's primitives, zero implementation,
 zero knowledge of any specific OLTP backend:
 
-- **`traits/`** — `TransactionalStore` (`get(key)`, `put(key, record)`,
-  `delete(key)`, `write_batch(ops)`).
-- **`vo/`** — `RecordKey` (opaque string-based key), `Record` (opaque byte
-  payload), `WriteOp` (`Put(RecordKey, Record)` / `Delete(RecordKey)` — one
-  op in an atomic batch).
-- **`types/`** — `StoreFuture` (local boxed-future wrapper, same shape as
-  `message-broker-pattern::BrokerFuture`).
+- **`traits/`** — `TransactionalStore` (`type Key`/`type Record` associated
+  types, `get(key)`, `put(key, record)`, `delete(key)`, `write_batch(ops)`).
+  Generic over its own key/record types via associated types — not a fixed
+  opaque-bytes payload; see "Why `TransactionalStore` is generic over
+  `Key`/`Record`" below.
+- **`vo/`** — `WriteOp<K, R>` (`Put(K, R)` / `Delete(K)` — one op in an
+  atomic batch, generic over the same `Key`/`Record` types).
 - **`error/`** — `StoreError` (`NotFound`, `WriteFailed`,
   `TransactionFailed`, `ConnectionFailed`).
 
@@ -27,8 +27,7 @@ an in-process table, a real transactional database — lives in
 flowchart TD
     subgraph pattern["oltp-pattern (this repo)"]
         traits["traits<br/>TransactionalStore"]
-        vo["vo<br/>RecordKey, Record, WriteOp"]
-        types["types<br/>StoreFuture"]
+        vo["vo<br/>WriteOp"]
         error["error<br/>StoreError"]
     end
 
@@ -39,7 +38,6 @@ flowchart TD
 
     core -.->|implements| traits
     core -.->|depends on| vo
-    core -.->|depends on| types
     saf -.->|wires| core
 ```
 
@@ -55,16 +53,45 @@ operation that a single-key op can't express). Secondary indexes, range
 scans, and a query language are a different domain — see this repo's
 sibling, `olap-pattern`.
 
-## Why `Record` carries only raw bytes
+## Why `TransactionalStore` is generic over `Key`/`Record`
 
-Mirrors `message-broker-pattern::Message`: no schema, no column types, no
-serialization format baked into the contract. A `Record` is exactly as
-opaque as the caller needs it to be (JSON, protobuf, anything) — this
-crate has zero opinion. A structured, typed row with named columns is the
-`olap-pattern::Row`/`ColumnValue` shape instead, because analytical
-consumers genuinely need to inspect and operate on individual column
-values (aggregate, filter, project); a transactional consumer addressing a
-record by key does not.
+Until `oltp-pattern` v0.2.0, `TransactionalStore` was addressed by a fixed
+`RecordKey` (an opaque string wrapper) and held a fixed `Record` (an opaque
+`Vec<u8>` payload) — mirroring `message-broker-pattern::Message`'s shape.
+Raised as a real, checked zero-cost abstraction question in
+[oltp-pattern#5](https://github.com/sweengineeringlabs/oltp-pattern/issues/5):
+`Message` genuinely needs to be opaque bytes, because `MessageBroker`
+crosses real network boundaries (NATS/Kafka/Postgres) where something has
+to be serialized onto the wire regardless. `oltp-svc`'s only backend
+(`InMemoryTransactionalStore`) is purely in-process — there is no network
+boundary here at all, so forcing every caller through `Vec<u8>` bought
+nothing but an avoidable serialize/deserialize round trip.
+
+This org's own real prior art for this exact domain,
+`edge-application-repository-api`'s `Repository` trait (`type Entity`/
+`type Id` associated types, monomorphized per concrete implementation —
+found only after this crate first shipped without checking for it), does
+not make that mistake. `TransactionalStore` now follows that shape:
+`type Key`/`type Record` are associated types, and `get`/`put`/`delete`/
+`write_batch` are generic over whatever concrete types an implementation
+names. A caller using an in-process backend pays zero serialization cost;
+a caller whose backend genuinely needs bytes on the wire can still pick
+`Vec<u8>` as its own `Record` type — nothing is lost, only the forced case
+is removed.
+
+This also removes the per-call boxed future (`StoreFuture`, a
+`Pin<Box<dyn Future>>` wrapper) in favor of `impl Future` (RPITIT, stable
+since 1.75) — no heap allocation, no vtable dispatch — at a real, accepted
+cost: `TransactionalStore` is no longer object-safe (associated types plus
+RPITIT rule out `Box<dyn TransactionalStore>`). `oltp-svc`'s factory
+resolves the consequence with a generic function
+(`TransactionalStoreFactory::in_memory::<K, R>()`) rather than a uniform
+boxed return type — see that repo's own architecture doc.
+
+`StoreError::NotFound` stays a plain `String`, not a generic `Self::Key` --
+see that variant's own doc comment in `error/store_error.rs` for why
+(no real caller constructs it today; making the whole error type generic
+for an unused variant was judged disproportionate).
 
 ## Why `write_batch` takes `Vec<WriteOp>`, not separate multi-put/multi-delete methods
 
@@ -88,7 +115,7 @@ crate's own architecture.md.
 ## Scope boundary
 
 This repo covers exactly `TransactionalStore` (single-key point CRUD plus
-atomic multi-key batch writes). Not covered, deliberately:
+atomic multi-key batch writes). Not covered:
 
 - **Secondary indexes / range scans** — a `TransactionalStore` is
   addressed strictly by key; listing/scanning records by anything other

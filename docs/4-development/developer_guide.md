@@ -21,8 +21,7 @@ oltp-pattern/
     ├── src/
     │   ├── lib.rs
     │   ├── traits/          # TransactionalStore
-    │   ├── vo/               # RecordKey, Record, WriteOp
-    │   ├── types/            # StoreFuture
+    │   ├── vo/               # WriteOp
     │   └── error/            # StoreError
     └── tests/                 # one *_int_test.rs per public trait/type
 ```
@@ -31,7 +30,9 @@ oltp-pattern/
 
 - `dev` is the default branch; all work lands there first.
 - `main` gets fast-forwarded to `dev` after a shipped change, not on every commit.
-- Not yet published to crates.io. First publish will be v0.1.0.
+- Not yet published to crates.io. Current version `0.2.0` — bumped from
+  `0.1.0` when `TransactionalStore` moved to associated types, a breaking,
+  object-safety-losing change; see architecture.md.
 
 ## Working on This Crate
 
@@ -46,15 +47,20 @@ Dependency footprint is `thiserror` only (error boilerplate) — verify with
 `unsafe_code = "deny"` and `missing_docs = "warn"` are enforced via
 `[lints.rust]` in `Cargo.toml`.
 
-## This Is a Contract-First Crate — No Existing Pilot
+## This Was Designed Contract-First — the "No Existing Pilot" Premise Was Wrong
 
-Like `scheduler-pattern`, no prior art for an OLTP transactional record
-store exists anywhere in this org. Every primitive here was designed from
-domain first principles — see
-[ADR-001](../3-design/adr/ADR-001-contract-first-domain-design.md) for the
-reasoning behind each one, and for what was deliberately scoped out
-(secondary indexes/range scans, optimistic-concurrency/versioned writes,
-TTL, a `Validator` trait) rather than built speculatively.
+Every primitive here was originally designed from domain first principles,
+on the belief that no prior art for an OLTP transactional record store
+existed anywhere in this org. That belief was checked only after the fact
+and turned out to be false —
+`edge-application-repository-api`'s `Repository<Entity, Id>` was real,
+existing prior art, and `TransactionalStore` was redesigned around its
+real shape (associated types, not opaque bytes) once found. See
+[ADR-001](../3-design/adr/ADR-001-contract-first-domain-design.md)'s own
+amendment note and `docs/3-design/architecture.md` for the full story, and
+for what's still genuinely scoped out pending a real consumer (secondary
+indexes/range scans, optimistic-concurrency/versioned writes, TTL, a
+`Validator` trait).
 
 ## See Also
 

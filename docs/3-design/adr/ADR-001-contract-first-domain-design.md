@@ -2,6 +2,17 @@
 
 **Status**: Accepted
 **Date**: 2026-09-15
+**Amendment**: The "no existing pilot" premise below turned out to be
+false — `edge-application-repository-api`'s `Repository<Entity, Id>` was
+real, existing prior art for this exact domain, found only after this
+crate first shipped without checking for it. `TransactionalStore` was
+redesigned around that precedent's real shape (`type Key`/`type Record`
+associated types, not opaque `RecordKey`/`Record` bytes) in v0.2.0 — see
+`docs/3-design/architecture.md`'s "Why `TransactionalStore` is generic
+over `Key`/`Record`" for the full reasoning. The rest of this ADR — the
+contract-first *methodology* itself, and every primitive's own scoping
+reasoning below — is preserved as the historical record of the original
+decision, not rewritten to pretend the prior-art miss didn't happen.
 
 ## Context
 
